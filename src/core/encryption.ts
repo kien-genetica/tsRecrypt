@@ -63,6 +63,17 @@ export class Encryption {
     const h = Encryption.hashToCurve(concatenated);
 
     // Generate S
+    // get s = v + e * H2(E || V)
+    const priEBig = BigInt("0x" + priETest);
+    const priVBig = BigInt("0x" + priVTest);
+    const mul = bigIntMul(priEBig, h);
+    const s = bigIntAdd(priVBig, mul);
+
+    // get (pk_A)^{e+v}
+    const sum = bigIntAdd(priEBig, priVBig); // sum = e + v
+
+    // point calculation is not yet correct
+    const point = Encryption.pointScalarMul(pubE, sum);
   }
 
   static concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -86,10 +97,33 @@ export class Encryption {
     // Perform modulo operation (matching Go's Mod operation)
     return hashInt % curveN; //99873723032072448160199860978492267477631206411671014351879442026081161197872n
   }
+
+  static pointScalarMul(point: Uint8Array, scalar: bigint): Uint8Array {
+    // Convert the uncompressed public key point to ProjectivePoint
+    const P = secp256k1.ProjectivePoint.fromHex(
+      Buffer.from(point).toString("hex")
+    );
+
+    // Perform scalar multiplication
+    const result = P.multiply(scalar);
+
+    // Convert back to uncompressed format
+    return result.toRawBytes(false);
+  }
 }
 
 export interface Capsule {
   E: string;
   V: string;
   S: bigint;
+}
+
+function bigIntMul(a: bigint, b: bigint): bigint {
+  const curveN = BigInt(secp256k1.CURVE.n);
+  return (a * b) % curveN;
+}
+
+function bigIntAdd(a: bigint, b: bigint): bigint {
+  const curveN = BigInt(secp256k1.CURVE.n);
+  return (a + b) % curveN;
 }
