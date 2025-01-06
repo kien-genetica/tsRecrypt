@@ -1,5 +1,13 @@
 import { ethers } from "ethers";
-import { EncryptionKey, EncryptedData, ReEncryptionKey } from "../types";
+import {
+  EncryptionKey,
+  EncryptedData,
+  ReEncryptionKey,
+  ReEncryptedData,
+  Capsule,
+  EncryptKeyGen,
+  DecryptParams,
+} from "../types";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { mod } from "@noble/curves/abstract/modular";
 
@@ -16,7 +24,7 @@ export class Encryption {
     recipientPublicKey: Uint8Array,
     privETest: string,
     privVTest: string
-  ): Promise<Uint8Array> {
+  ): Promise<EncryptedData> {
     const encryptKeyGen = Encryption.encryptKeygen(
       recipientPublicKey,
       privETest,
@@ -49,7 +57,10 @@ export class Encryption {
     );
 
     const ciphertextBytes = new Uint8Array(ciphertext);
-    return ciphertextBytes;
+    return {
+      data: ciphertextBytes,
+      capsule: encryptKeyGen.Capsule,
+    };
   }
 
   static generateReEncryptionKey(
@@ -73,7 +84,6 @@ export class Encryption {
     console.log("point:", Encryption.bytesToHex(point));
 
     // Calculate d = H3(X_A || pk_B || point)
-
     // Concatenate X_A || pk_B || point
     const concatenated = Encryption.concatBytes(
       Encryption.concatBytes(pubX, delegateePublicKey),
@@ -89,25 +99,120 @@ export class Encryption {
     );
     const dInverse = modInverse(d, secp256k1.CURVE.n);
     const rk = (delegatorPrivKeyBig * dInverse) % secp256k1.CURVE.n;
-    // return {
-    //   key: Encryption.hexToBytes(rkFinal.toString(16)),
-    //   pubX: pubX,
-    // };
+
     return {
       key: rk,
       pubX: pubX,
     };
   }
 
+  static async reEncrypt(rk: bigint, capsule: Capsule): Promise<Capsule> {
+    // Check g^s == V * E^{H2(E || V)}
+    const basePoint = secp256k1.ProjectivePoint.BASE;
+    const gs = basePoint.multiply(capsule.S);
+
+    // Calculate H2(E || V)
+    const concatenated = Encryption.concatBytes(
+      Encryption.hexToBytes(capsule.E),
+      Encryption.hexToBytes(capsule.V)
+    );
+    const h = Encryption.hashToCurve(concatenated);
+
+    // Add '04' prefix for uncompressed point format if not present
+    const eHex = capsule.E.startsWith("04") ? capsule.E : "04" + capsule.E;
+    const vHex = capsule.V.startsWith("04") ? capsule.V : "04" + capsule.V;
+
+    // Calculate E^h
+    const E = secp256k1.ProjectivePoint.fromHex(eHex);
+    const Eh = E.multiply(h);
+
+    // Calculate V * E^h
+    const V = secp256k1.ProjectivePoint.fromHex(vHex);
+    const VEh = V.add(Eh);
+
+    // Verify g^s == V * E^h
+    if (!gs.equals(VEh)) {
+      throw new Error("Capsule not match");
+    }
+
+    // E' = E^{rk}, V' = V^{rk}
+    const newE = E.multiply(rk);
+    const newV = V.multiply(rk);
+
+    return {
+      E: Encryption.bytesToHex(newE.toRawBytes(false)),
+      V: Encryption.bytesToHex(newV.toRawBytes(false)),
+      S: capsule.S,
+    };
+  }
+
   /**
    * Decrypts data using recipient's private key
    */
-  static async decrypt(
-    encryptedData: EncryptedData,
-    privateKey: Uint8Array
+  static async decrypt({
+    privateKey,
+    capsule,
+    pubX,
+    cipherText,
+  }: DecryptParams): Promise<string> {
+    // Generate decryption key
+    const keyBytes = await Encryption.decryptKeyGen(privateKey, capsule, pubX);
+    console.log("keyBytes:", Encryption.bytesToHex(keyBytes));
+    // Get key and nonce for AES-GCM
+    const key = Encryption.bytesToHex(keyBytes).slice(0, 32);
+    const nonce = keyBytes.slice(0, 12);
+
+    // Import key for AES-GCM
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(key),
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"]
+    );
+
+    // Decrypt using AES-GCM
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: nonce,
+      },
+      cryptoKey,
+      cipherText
+    );
+
+    // Convert decrypted bytes to string
+    return new TextDecoder().decode(decrypted);
+  }
+
+  private static async decryptKeyGen(
+    privateKey: Uint8Array,
+    capsule: Capsule,
+    pubX: Uint8Array
   ): Promise<Uint8Array> {
-    // TODO: Implement decryption
-    throw new Error("Not implemented");
+    // S = X_A^{sk_B}
+    const privKeyBig = BigInt("0x" + Encryption.bytesToHex(privateKey));
+
+    const S = Encryption.pointScalarMul(pubX, privKeyBig);
+
+    console.log("S:", Encryption.bytesToHex(S));
+
+    // Recreate d = H3(X_A || pk_B || S)
+    const publicKey = Encryption.getUncompressedPublicKey(privateKey);
+    const concatenated = Encryption.concatBytes(
+      Encryption.concatBytes(pubX, publicKey),
+      S
+    );
+    const d = Encryption.hashToCurve(concatenated);
+
+    // Calculate point = (E' * V')^d
+    const E = secp256k1.ProjectivePoint.fromHex(capsule.E);
+    const V = secp256k1.ProjectivePoint.fromHex(capsule.V);
+    const EV = E.add(V);
+    const point = EV.multiply(d);
+
+    // Generate AES key
+    return sha3Hash(point.toRawBytes(false));
   }
 
   static hexToBytes(hex: string): Uint8Array {
@@ -166,8 +271,8 @@ export class Encryption {
 
     return {
       Capsule: {
-        E: Encryption.bytesToHex(point),
-        V: Encryption.bytesToHex(priV),
+        E: Encryption.bytesToHex(pubE),
+        V: Encryption.bytesToHex(pubV),
         S: s,
       },
       aesKey: Encryption.bytesToHex(aesKey),
@@ -204,16 +309,6 @@ export class Encryption {
     // Convert back to uncompressed format
     return result.toRawBytes(false);
   }
-}
-
-export interface EncryptKeyGen {
-  Capsule: Capsule;
-  aesKey: string;
-}
-export interface Capsule {
-  E: string;
-  V: string;
-  S: bigint;
 }
 
 function bigIntMul(a: bigint, b: bigint): bigint {
