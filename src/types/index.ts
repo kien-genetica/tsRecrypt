@@ -4,7 +4,8 @@ export interface EncryptionKey {
 }
 
 export interface ReEncryptionKey {
-  key: Uint8Array;
+  key: bigint;
+  pubX: Uint8Array;
 }
 
 export interface EncryptedData {

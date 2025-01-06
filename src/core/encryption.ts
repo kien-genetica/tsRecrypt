@@ -1,6 +1,8 @@
 import { ethers } from "ethers";
-import { EncryptionKey, EncryptedData } from "../types";
+import { EncryptionKey, EncryptedData, ReEncryptionKey } from "../types";
 import { secp256k1 } from "@noble/curves/secp256k1";
+import { mod } from "@noble/curves/abstract/modular";
+
 import { sha3_256 } from "js-sha3";
 import { webcrypto } from "crypto";
 const crypto = webcrypto;
@@ -48,6 +50,53 @@ export class Encryption {
 
     const ciphertextBytes = new Uint8Array(ciphertext);
     return ciphertextBytes;
+  }
+
+  static generateReEncryptionKey(
+    delegatorPrivateKey: Uint8Array, // aPriKey
+    delegateePublicKey: Uint8Array, // bPubKey
+    privXTest: string // x_A
+  ): ReEncryptionKey {
+    // Generate x,X key-pair
+    // const priX = Encryption.hexToBytes(privXTest);
+    // const pubX = secp256k1.getPublicKey(priX, false);
+
+    // calculate x_a, X_a
+    const priX = Encryption.hexToBytes(privXTest);
+    const pubX = Encryption.getUncompressedPublicKey(priX);
+
+    // Get private x_a bignumber
+    const priXBig = BigInt("0x" + Encryption.bytesToHex(priX));
+
+    // Calculate pk_B^x_A
+    const point = Encryption.pointScalarMul(delegateePublicKey, priXBig);
+    console.log("point:", Encryption.bytesToHex(point));
+
+    // Calculate d = H3(X_A || pk_B || point)
+
+    // Concatenate X_A || pk_B || point
+    const concatenated = Encryption.concatBytes(
+      Encryption.concatBytes(pubX, delegateePublicKey),
+      point
+    );
+
+    // Hash to curve
+    const d = Encryption.hashToCurve(concatenated);
+
+    // Calculate rk = sk_A * d^(-1)
+    const delegatorPrivKeyBig = BigInt(
+      "0x" + Encryption.bytesToHex(delegatorPrivateKey)
+    );
+    const dInverse = modInverse(d, secp256k1.CURVE.n);
+    const rk = (delegatorPrivKeyBig * dInverse) % secp256k1.CURVE.n;
+    // return {
+    //   key: Encryption.hexToBytes(rkFinal.toString(16)),
+    //   pubX: pubX,
+    // };
+    return {
+      key: rk,
+      pubX: pubX,
+    };
   }
 
   /**
@@ -179,4 +228,21 @@ function bigIntAdd(a: bigint, b: bigint): bigint {
 
 function sha3Hash(message: Uint8Array): Uint8Array {
   return new Uint8Array(sha3_256.array(message));
+}
+
+// TODO: find out how it work
+function modInverse(a: bigint, m: bigint): bigint {
+  let t = 0n;
+  let newT = 1n;
+  let r = m;
+  let newR = a;
+
+  while (newR !== 0n) {
+    const quotient = r / newR;
+    [t, newT] = [newT, t - quotient * newT];
+    [r, newR] = [newR, r - quotient * newR];
+  }
+
+  if (t < 0n) t += m;
+  return t;
 }
