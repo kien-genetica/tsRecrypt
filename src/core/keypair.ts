@@ -1,12 +1,13 @@
-import { ethers, SigningKey } from "ethers";
+import { ethers, HDNodeWallet, SigningKey } from "ethers";
 import { EncryptionKey, EncryptedData } from "../types";
 
 export class Keypair {
   /**
    * Generates a new key pair for encryption
    */
-  static async generateKeyPair() {
+  static async generateKeyPair(): Promise<HDNodeWallet> {
     const wallet = ethers.Wallet.createRandom();
+    return wallet;
   }
 
   static async fromPrivateKey(privateKey: string): Promise<EncryptionKey> {
@@ -26,27 +27,5 @@ export class Keypair {
       privateKey: formattedKey,
       publicKey,
     };
-  }
-
-  /**
-   * Encrypts data using recipient's public key
-   */
-  static async encrypt(
-    data: Uint8Array,
-    recipientPublicKey: Uint8Array
-  ): Promise<EncryptedData> {
-    // TODO: Implement encryption
-    throw new Error("Not implemented");
-  }
-
-  /**
-   * Decrypts data using recipient's private key
-   */
-  static async decrypt(
-    encryptedData: EncryptedData,
-    privateKey: Uint8Array
-  ): Promise<Uint8Array> {
-    // TODO: Implement decryption
-    throw new Error("Not implemented");
   }
 }
