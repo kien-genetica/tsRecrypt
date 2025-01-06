@@ -44,7 +44,11 @@ export class Encryption {
     return point;
   }
 
-  static encryptKeygen(priETest: string, priVTest: string) {
+  static encryptKeygen(
+    pubkey: Uint8Array,
+    priETest: string,
+    priVTest: string
+  ): EncryptKeyGen {
     // Generate E, V key-pairs using secp256k1
     const priE = Encryption.hexToBytes(priETest);
     const pubE = Encryption.getUncompressedPublicKey(priE);
@@ -73,7 +77,19 @@ export class Encryption {
     const sum = bigIntAdd(priEBig, priVBig); // sum = e + v
 
     // point calculation is not yet correct
-    const point = Encryption.pointScalarMul(pubE, sum);
+    const point = Encryption.pointScalarMul(pubkey, sum);
+
+    // Generate aes key
+    const aesKey = Encryption.sha3Hash(point);
+
+    return {
+      Capsule: {
+        E: Encryption.bytesToHex(point),
+        V: Encryption.bytesToHex(priV),
+        S: s,
+      },
+      aesKey: Encryption.bytesToHex(aesKey),
+    };
   }
 
   static concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -112,6 +128,10 @@ export class Encryption {
   }
 }
 
+export interface EncryptKeyGen {
+  Capsule: Capsule;
+  aesKey: string;
+}
 export interface Capsule {
   E: string;
   V: string;
