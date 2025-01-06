@@ -2,18 +2,52 @@ import { ethers } from "ethers";
 import { EncryptionKey, EncryptedData } from "../types";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { sha3_256 } from "js-sha3";
-// import { utils } from "ethers"; // for RLP encsoding
+import { webcrypto } from "crypto";
+const crypto = webcrypto;
 
 export class Encryption {
   /**
    * Encrypts data using recipient's public key
    */
   static async encrypt(
-    data: Uint8Array,
-    recipientPublicKey: Uint8Array
-  ): Promise<EncryptedData> {
-    // TODO: Implement encryption
-    throw new Error("Not implemented");
+    data: string,
+    recipientPublicKey: Uint8Array,
+    privETest: string,
+    privVTest: string
+  ): Promise<Uint8Array> {
+    const encryptKeyGen = Encryption.encryptKeygen(
+      recipientPublicKey,
+      privETest,
+      privVTest
+    );
+
+    const keyBytes = Encryption.hexToBytes(encryptKeyGen.aesKey);
+    const key = encryptKeyGen.aesKey.slice(0, 32); // Take first 32 chars of hex string
+    const nonce = keyBytes.slice(0, 12); // Take first 12 bytes as nonce
+
+    const encoder = new TextEncoder();
+    const dataBytes = encoder.encode(data);
+
+    // Import key properly for AES-GCM
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(key),
+      { name: "AES-GCM" },
+      false,
+      ["encrypt"]
+    );
+
+    const ciphertext = await crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv: nonce,
+      },
+      cryptoKey,
+      dataBytes
+    );
+
+    const ciphertextBytes = new Uint8Array(ciphertext);
+    return ciphertextBytes;
   }
 
   /**
@@ -44,6 +78,7 @@ export class Encryption {
     return point;
   }
 
+  // TODO: generate privE, privV inside the function
   static encryptKeygen(
     pubkey: Uint8Array,
     priETest: string,
@@ -57,10 +92,10 @@ export class Encryption {
     const pubV = Encryption.getUncompressedPublicKey(priV);
 
     // Format public keys to match Go output (uncompressed format)
-    console.log("priE:", priETest);
-    console.log("pubE:", "04" + Encryption.bytesToHex(pubE));
-    console.log("priV:", priVTest);
-    console.log("pubV:", "04" + Encryption.bytesToHex(pubV));
+    // console.log("priE:", priETest);
+    // console.log("pubE:", "04" + Encryption.bytesToHex(pubE));
+    // console.log("priV:", priVTest);
+    // console.log("pubV:", "04" + Encryption.bytesToHex(pubV));
 
     // Concatenate the public keys
     const concatenated = Encryption.concatBytes(pubE, pubV);
@@ -75,12 +110,10 @@ export class Encryption {
 
     // get (pk_A)^{e+v}
     const sum = bigIntAdd(priEBig, priVBig); // sum = e + v
-
-    // point calculation is not yet correct
     const point = Encryption.pointScalarMul(pubkey, sum);
 
     // Generate aes key
-    const aesKey = Encryption.sha3Hash(point);
+    const aesKey = sha3Hash(point);
 
     return {
       Capsule: {
@@ -94,10 +127,6 @@ export class Encryption {
 
   static concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
     return new Uint8Array([...a, ...b]);
-  }
-
-  static sha3Hash(message: Uint8Array): Uint8Array {
-    return new Uint8Array(sha3_256.array(message));
   }
 
   /**
@@ -146,4 +175,8 @@ function bigIntMul(a: bigint, b: bigint): bigint {
 function bigIntAdd(a: bigint, b: bigint): bigint {
   const curveN = BigInt(secp256k1.CURVE.n);
   return (a + b) % curveN;
+}
+
+function sha3Hash(message: Uint8Array): Uint8Array {
+  return new Uint8Array(sha3_256.array(message));
 }
