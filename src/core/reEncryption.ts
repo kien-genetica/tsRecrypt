@@ -14,6 +14,7 @@ export class ReEncryption {
     delegateePublicKey: Uint8Array
   ): Promise<ReEncryptionKey> {
     // TODO: Implement re-encryption key generation
+
     throw new Error("Not implemented");
   }
 
