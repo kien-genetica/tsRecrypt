@@ -21,7 +21,7 @@ async function main() {
 
   const data = "Hello, world!";
   const encryptedData = await Encryption.encrypt(
-    data,
+    Buffer.from(data),
     alicePublicKey,
     priETest,
     priVTest

@@ -10,6 +10,7 @@ import {
 } from "../types";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { mod } from "@noble/curves/abstract/modular";
+import * as fs from "fs";
 
 import { sha3_256 } from "js-sha3";
 import { webcrypto } from "crypto";
@@ -20,7 +21,7 @@ export class Encryption {
    * Encrypts data using recipient's public key
    */
   static async encrypt(
-    data: string,
+    data: Buffer,
     recipientPublicKey: Uint8Array,
     privETest: string,
     privVTest: string
@@ -36,8 +37,6 @@ export class Encryption {
     const nonce = keyBytes.slice(0, 12); // Take first 12 bytes as nonce
 
     const encoder = new TextEncoder();
-    const dataBytes = encoder.encode(data);
-
     // Import key properly for AES-GCM
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
@@ -53,7 +52,7 @@ export class Encryption {
         iv: nonce,
       },
       cryptoKey,
-      dataBytes
+      data
     );
 
     const ciphertextBytes = new Uint8Array(ciphertext);
@@ -61,6 +60,53 @@ export class Encryption {
       data: ciphertextBytes,
       capsule: encryptKeyGen.Capsule,
     };
+  }
+
+  static async encryptFile(
+    inputFile: string, // Changed from Buffer to string to match Go
+    outputFile: string,
+    recipientPublicKey: Uint8Array,
+    priETest: string,
+    priVTest: string
+  ): Promise<Capsule> {
+    // Generate encryption key
+    const encryptKeyGen = Encryption.encryptKeygen(
+      recipientPublicKey,
+      priETest,
+      priVTest
+    );
+
+    const keyBytes = Encryption.hexToBytes(encryptKeyGen.aesKey);
+    const key = encryptKeyGen.aesKey.slice(0, 32);
+    const nonce = keyBytes.slice(0, 16);
+
+    // Read input file
+    const inFile = await fs.promises.readFile(inputFile);
+
+    // Create cipher
+    const block = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(key),
+      { name: "AES-CTR" }, // Using CTR as closest to OFB
+      false,
+      ["encrypt"]
+    );
+
+    // Encrypt file
+    const encrypted = await crypto.subtle.encrypt(
+      {
+        name: "AES-CTR",
+        counter: nonce,
+        length: 128,
+      },
+      block,
+      inFile
+    );
+
+    // Write to output file
+    await fs.promises.writeFile(outputFile, Buffer.from(encrypted));
+
+    return encryptKeyGen.Capsule;
   }
 
   static generateReEncryptionKey(
@@ -154,7 +200,7 @@ export class Encryption {
     capsule,
     pubX,
     cipherText,
-  }: DecryptParams): Promise<string> {
+  }: DecryptParams): Promise<Buffer> {
     // Generate decryption key
     const keyBytes = await Encryption.decryptKeyGen(privateKey, capsule, pubX);
     console.log("keyBytes:", Encryption.bytesToHex(keyBytes));
@@ -182,7 +228,7 @@ export class Encryption {
     );
 
     // Convert decrypted bytes to string
-    return new TextDecoder().decode(decrypted);
+    return Buffer.from(decrypted);
   }
 
   private static async decryptKeyGen(
