@@ -2,11 +2,6 @@ import { Keypair } from "./src/core/keypair";
 import { Encryption } from "./src/core/encryption";
 import * as utils from "./src/core/utils";
 async function main() {
-  const priETest =
-    "f41f61f79d4853da544021b0cf00dcfd1ae581731e57084678a9c240d1178b6a";
-  const priVTest =
-    "83a49bd850c4608b82d7525bd6f8680c02208393c05a5df79e7c21f542bd4e2a";
-
   const alicePrivateKey =
     "f41f61f79d4853da544021b0cf00dcfd1ae581731e57084678a9c240d1178b6a";
   const bobPrivateKey =
@@ -23,9 +18,7 @@ async function main() {
   const data = "Hello, world!";
   const encryptedData = await Encryption.encrypt(
     Buffer.from(data),
-    alicePublicKey,
-    priETest,
-    priVTest
+    alicePublicKey
   );
   console.log("encryptedData:", encryptedData.data);
   console.log("encryptedData:", Encryption.bytesToHex(encryptedData.data));
@@ -39,15 +32,12 @@ async function main() {
 
   // Generate re-encryption key
   console.log("\n===== generate re-encryption key =====");
-  let priXMock =
-    "15206b3dc0d4e258b082dc0d7584a6e88def0a503b540f01527803769ae6bbbf";
-  const reEncryptionKey = await Encryption.generateReEncryptionKey(
-    Encryption.hexToBytes(priETest),
-    bobPublicKey,
-    priXMock
+  const reEncryptionKey = Encryption.generateReEncryptionKey(
+    Encryption.hexToBytes(alicePrivateKey),
+    bobPublicKey
   );
 
-  console.log("reEncryptionKey:", utils.bigintToHex(reEncryptionKey.key));
+  console.log("reEncryptionKey hex:", utils.bigintToHex(reEncryptionKey.key));
   console.log(
     "reEncryptionKey bigint:",
     utils.hexToBigint(utils.bigintToHex(reEncryptionKey.key))
@@ -80,7 +70,7 @@ async function main() {
     pubX: reEncryptionKey.pubX,
     cipherText: encryptedData.data,
   });
-  console.log("decrypted:", decrypted);
+  console.log("decrypted:", decrypted.toString());
 }
 
 main();

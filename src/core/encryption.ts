@@ -20,13 +20,13 @@ export class Encryption {
   /**
    * Encrypts data using recipient's public key
    */
-  static async encrypt(
+  static async encrypt_test(
     data: Buffer,
     recipientPublicKey: Uint8Array,
     privETest: string,
     privVTest: string
   ): Promise<EncryptedData> {
-    const encryptKeyGen = Encryption.encryptKeygen(
+    const encryptKeyGen = Encryption.encryptKeygenTest(
       recipientPublicKey,
       privETest,
       privVTest
@@ -62,72 +62,61 @@ export class Encryption {
     };
   }
 
-  static async encryptFile(
-    inputFile: string, // Changed from Buffer to string to match Go
-    outputFile: string,
-    recipientPublicKey: Uint8Array,
-    priETest: string,
-    priVTest: string
-  ): Promise<Capsule> {
-    // Generate encryption key
-    const encryptKeyGen = Encryption.encryptKeygen(
-      recipientPublicKey,
-      priETest,
-      priVTest
-    );
+  /**
+   * Encrypts data using recipient's public key
+   */
+  static async encrypt(
+    data: Buffer,
+    recipientPublicKey: Uint8Array
+  ): Promise<EncryptedData> {
+    const encryptKeyGen = Encryption.encryptKeygen(recipientPublicKey);
 
     const keyBytes = Encryption.hexToBytes(encryptKeyGen.aesKey);
-    const key = encryptKeyGen.aesKey.slice(0, 32);
-    const nonce = keyBytes.slice(0, 16);
+    const key = encryptKeyGen.aesKey.slice(0, 32); // Take first 32 chars of hex string
+    const nonce = keyBytes.slice(0, 12); // Take first 12 bytes as nonce
 
-    // Read input file
-    const inFile = await fs.promises.readFile(inputFile);
-
-    // Create cipher
-    const block = await crypto.subtle.importKey(
+    const encoder = new TextEncoder();
+    // Import key propefrly for AES-GCM
+    const cryptoKey = await crypto.subtle.importKey(
       "raw",
-      new TextEncoder().encode(key),
-      { name: "AES-CTR" }, // Using CTR as closest to OFB
+      encoder.encode(key),
+      { name: "AES-GCM" },
       false,
       ["encrypt"]
     );
 
-    // Encrypt file
-    const encrypted = await crypto.subtle.encrypt(
+    const ciphertext = await crypto.subtle.encrypt(
       {
-        name: "AES-CTR",
-        counter: nonce,
-        length: 128,
+        name: "AES-GCM",
+        iv: nonce,
       },
-      block,
-      inFile
+      cryptoKey,
+      data
     );
 
-    // Write to output file
-    await fs.promises.writeFile(outputFile, Buffer.from(encrypted));
-
-    return encryptKeyGen.Capsule;
+    const ciphertextBytes = new Uint8Array(ciphertext);
+    return {
+      data: ciphertextBytes,
+      capsule: encryptKeyGen.Capsule,
+    };
   }
 
   static generateReEncryptionKey(
     delegatorPrivateKey: Uint8Array, // aPriKey
-    delegateePublicKey: Uint8Array, // bPubKey
-    privXTest: string // x_A
+    delegateePublicKey: Uint8Array // bPubKey
   ): ReEncryptionKey {
     // Generate x,X key-pair
     // const priX = Encryption.hexToBytes(privXTest);
     // const pubX = secp256k1.getPublicKey(priX, false);
-
-    // calculate x_a, X_a
-    const priX = Encryption.hexToBytes(privXTest);
-    const pubX = Encryption.getUncompressedPublicKey(priX);
+    // generate prix randomly
+    const priX = secp256k1.utils.randomPrivateKey();
+    const pubX = secp256k1.getPublicKey(priX, false);
 
     // Get private x_a bignumber
     const priXBig = BigInt("0x" + Encryption.bytesToHex(priX));
 
     // Calculate pk_B^x_A
     const point = Encryption.pointScalarMul(delegateePublicKey, priXBig);
-    console.log("point:", Encryption.bytesToHex(point));
 
     // Calculate d = H3(X_A || pk_B || point)
     // Concatenate X_A || pk_B || point
@@ -203,7 +192,6 @@ export class Encryption {
   }: DecryptParams): Promise<Buffer> {
     // Generate decryption key
     const keyBytes = await Encryption.decryptKeyGen(privateKey, capsule, pubX);
-    console.log("keyBytes:", Encryption.bytesToHex(keyBytes));
     // Get key and nonce for AES-GCM
     const key = Encryption.bytesToHex(keyBytes).slice(0, 32);
     const nonce = keyBytes.slice(0, 12);
@@ -241,8 +229,6 @@ export class Encryption {
 
     const S = Encryption.pointScalarMul(pubX, privKeyBig);
 
-    console.log("S:", Encryption.bytesToHex(S));
-
     // Recreate d = H3(X_A || pk_B || S)
     const publicKey = Encryption.getUncompressedPublicKey(privateKey);
     const concatenated = Encryption.concatBytes(
@@ -278,8 +264,7 @@ export class Encryption {
     return point;
   }
 
-  // TODO: generate privE, privV inside the function
-  static encryptKeygen(
+  static encryptKeygenTest(
     pubkey: Uint8Array,
     priETest: string,
     priVTest: string
@@ -291,12 +276,6 @@ export class Encryption {
     const priV = Encryption.hexToBytes(priVTest);
     const pubV = Encryption.getUncompressedPublicKey(priV);
 
-    // Format public keys to match Go output (uncompressed format)
-    // console.log("priE:", priETest);
-    // console.log("pubE:", "04" + Encryption.bytesToHex(pubE));
-    // console.log("priV:", priVTest);
-    // console.log("pubV:", "04" + Encryption.bytesToHex(pubV));
-
     // Concatenate the public keys
     const concatenated = Encryption.concatBytes(pubE, pubV);
     const h = Encryption.hashToCurve(concatenated);
@@ -305,6 +284,43 @@ export class Encryption {
     // get s = v + e * H2(E || V)
     const priEBig = BigInt("0x" + priETest);
     const priVBig = BigInt("0x" + priVTest);
+    const mul = bigIntMul(priEBig, h);
+    const s = bigIntAdd(priVBig, mul);
+
+    // get (pk_A)^{e+v}
+    const sum = bigIntAdd(priEBig, priVBig); // sum = e + v
+    const point = Encryption.pointScalarMul(pubkey, sum);
+
+    // Generate aes key
+    const aesKey = sha3Hash(point);
+
+    return {
+      Capsule: {
+        E: Encryption.bytesToHex(pubE),
+        V: Encryption.bytesToHex(pubV),
+        S: s,
+      },
+      aesKey: Encryption.bytesToHex(aesKey),
+    };
+  }
+
+  // TODO: generate privE, privV inside the function
+  static encryptKeygen(pubkey: Uint8Array): EncryptKeyGen {
+    // generate priE and priV randomly
+    const priE = secp256k1.utils.randomPrivateKey();
+    const priV = secp256k1.utils.randomPrivateKey();
+
+    const pubE = secp256k1.getPublicKey(priE, false);
+    const pubV = secp256k1.getPublicKey(priV, false);
+
+    // Concatenate the public keys
+    const concatenated = Encryption.concatBytes(pubE, pubV);
+    const h = Encryption.hashToCurve(concatenated);
+
+    // Generate S
+    // get s = v + e * H2(E || V)
+    const priEBig = BigInt("0x" + Encryption.bytesToHex(priE));
+    const priVBig = BigInt("0x" + Encryption.bytesToHex(priV));
     const mul = bigIntMul(priEBig, h);
     const s = bigIntAdd(priVBig, mul);
 
