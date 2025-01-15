@@ -37,7 +37,7 @@ export class Encryption {
     const nonce = keyBytes.slice(0, 12); // Take first 12 bytes as nonce
 
     const encoder = new TextEncoder();
-    // Import key properly for AES-GCM
+    // Import key propefrly for AES-GCM
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
       encoder.encode(key),
